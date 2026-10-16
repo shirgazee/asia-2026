@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // Собирает дашборд поездки из хаба в Obsidian: build/index.html (не шифрованный, в git не идёт).
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { marked } from 'marked';
 
 const HUB = process.argv[2] ?? '/home/ae/Documents/vault/Поездки/Азия 2026/Азия 2026.md';
+const HUB_DIR = dirname(HUB);
 
 // Часовые пояса городов маршрута; `on` — день в городе, на который считаем сдвиг.
 const CITIES = [
@@ -31,14 +33,15 @@ function stripCallouts(md) {
 
 // Вики-ссылки → текст, госсайты и телефоны → кликабельные (Мира открывает с телефона).
 const linkify = (s) => s
-  .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, a, b) => b ?? a)
+  .replace(/(?<!!)\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, a, b) => b ?? a)
   .replace(/(?<![\w./@-])((?:[a-z0-9-]+\.)+(?:go\.kr|gov\.cn)(?:\/[\w./?=&%-]*)?)/gi, (m) => `[${m}](https://${m})`)
   .replace(/\+\d{1,3}(?: \d{2,3}){3,4}/g, (m) => `[${m}](tel:${m.replace(/ /g, '')})`);
 
 const inline = (s) => marked.parseInline(s ?? '');
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-const md = linkify(stripCallouts(readFileSync(HUB, 'utf8')));
+const rawMd = linkify(readFileSync(HUB, 'utf8'));
+const md = stripCallouts(rawMd);
 
 const [tripName, routeTitle = ''] = md.match(/^# (.+)$/m)[1].split(/:\s*/);
 const [intro, ...chunks] = md.split(/^## /m);
@@ -92,11 +95,69 @@ const chain = [
   ...routeTitle.split('→').map((s) => s.trim()),
   transfers.at(-1).place.split('→')[1].split(/\s+через\s+/)[0].trim(),
 ];
+// Города и места: «### Город» и «#### Место», в каждом блоке фото ![[файл]] и callout с автором фото.
+// Картинки лежат открыто рядом со страницей (docs/img) — шифруется только HTML.
+for (const dir of ['build', 'docs']) rmSync(new URL(`./${dir}/img/`, import.meta.url), { recursive: true, force: true });
+function useImage(file) {
+  const src = [join(HUB_DIR, 'attachments', file), join(HUB_DIR, file)].find(existsSync);
+  if (!src) { console.warn(`нет картинки: ${file}`); return null; }
+  for (const dir of ['build', 'docs']) {
+    mkdirSync(new URL(`./${dir}/img/`, import.meta.url), { recursive: true });
+    copyFileSync(src, new URL(`./${dir}/img/${file}`, import.meta.url));
+  }
+  return `img/${encodeURIComponent(file)}`;
+}
+
+function creditHtml(s) {
+  const url = s.match(/https?:\/\/\S+/)?.[0];
+  const parts = s.replace(url ?? '', '').split(/,\s*/).map((p) => p.trim()).filter((p) => p && !/^«.*»$/.test(p));
+  const text = esc(`Фото: ${parts.join(' · ')}`);
+  return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${text}</a>` : text;
+}
+
+function parseBlock(text) {
+  const img = text.match(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/);
+  const credit = text.match(/^>\s*\[!источник\]\s*фото[^:]*:\s*(.+)$/m);
+  const desc = stripCallouts(img ? text.replace(img[0], '') : text).trim();
+  return { img: img && useImage(img[1].trim()), credit: credit && creditHtml(credit[1]), desc: desc ? marked.parse(desc) : '' };
+}
+
+const splitHead = (chunk) => {
+  const nl = chunk.indexOf('\n');
+  return nl === -1 ? [chunk.trim(), ''] : [chunk.slice(0, nl).trim(), chunk.slice(nl + 1)];
+};
+const rawCities = rawMd.split(/^## /m).find((c) => c.startsWith('Города и места')) ?? '';
+const cities = rawCities.split(/^### /m).slice(1).map((chunk) => {
+  const [name, rest] = splitHead(chunk);
+  const [body, ...places] = rest.split(/^#### /m);
+  const stay = routeRows.find((r) => !r.transfer && r.place === name);
+  return {
+    name, dates: stay?.dates ?? '', ...parseBlock(body),
+    places: places.map((p) => { const [pname, pbody] = splitHead(p); return { name: pname, ...parseBlock(pbody) }; }),
+  };
+});
+const cityId = (name) => `city-${name.toLowerCase().replace(/\s+/g, '-')}`;
+const hasCity = (name) => cities.some((c) => c.name === name);
+const placeHtml = (p) => `
+          <div class="pl">${p.img ? `<img src="${p.img}" alt="${esc(p.name)}" loading="lazy">` : ''}
+            <div class="pl-body"><div class="pl-name">${inline(p.name)}</div>${p.desc ? `<div class="pl-desc">${p.desc}</div>` : ''}${p.credit ? `<div class="credit">${p.credit}</div>` : ''}</div>
+          </div>`;
+const citiesHtml = cities.map((c) => `
+      <article class="city" id="${cityId(c.name)}">
+        <div class="cover">${c.img ? `<img src="${c.img}" alt="${esc(c.name)}" loading="lazy">` : ''}
+          <div class="cap"><h3>${esc(c.name)}</h3>${c.dates ? `<span>${esc(c.dates)}</span>` : ''}</div>
+        </div>
+        ${c.credit ? `<div class="credit">${c.credit}</div>` : ''}
+        ${c.desc ? `<div class="prose city-desc">${c.desc}</div>` : ''}
+        ${c.places.length ? `<div class="places">${c.places.map(placeHtml).join('')}
+        </div>` : ''}
+      </article>`).join('');
+
 const routeHtml = routeRows.map((r) => `
       <li class="leg ${r.transfer ? 'transfer' : 'stay'}" data-from="${r.from}" data-to="${r.to}">
         <div class="when">${esc(r.dates)}</div>
         <div class="what">
-          <div class="place">${r.transfer ? `<span class="ic">${r.icon}</span> ` : ''}${inline(r.place)}</div>
+          <div class="place">${r.transfer ? `<span class="ic">${r.icon}</span> ` : ''}${!r.transfer && hasCity(r.place) ? `<a class="to-city" href="#${cityId(r.place)}">${inline(r.place)}</a>` : inline(r.place)}</div>
           ${r.transfer && r.transport !== '—' ? `<div class="sub">${inline(r.transport)}</div>` : ''}
           <div class="chips">${status(r.ticket, 'Билет', 'не куплен')}${status(r.stay, 'Жильё', 'не забронировано')}</div>
         </div>
@@ -113,8 +174,8 @@ const visaHtml = visaTable.rows.map(([country, ...cells]) => `
         <dl>${cells.map((c, i) => `<dt class="${personClass(people[i])}">${esc(people[i])}</dt><dd${/\*\*нужна/i.test(c) ? ' class="warn"' : ''}>${inline(c)}</dd>`).join('')}</dl>
       </div>`).join('');
 const visaParas = visaSec.split('\n').filter((l) => !l.trim().startsWith('|')).join('\n').trim().split(/\n{2,}/);
+// Абзац «⚠️ Главный риск» на дашборд не выводим — оба его знают (решение Дани 16.10).
 const riskIdx = visaParas.findIndex((p) => p.startsWith('**⚠️'));
-const riskHtml = riskIdx >= 0 ? marked.parse(visaParas[riskIdx]) : '';
 const visaDetailsHtml = marked.parse(visaParas.filter((_, i) => i !== riskIdx).join('\n\n'));
 
 // Дела: дедлайн — дата в хвосте после последнего « — »
@@ -250,8 +311,28 @@ const html = `<!doctype html>
   .leg.now .place::after { content: "сейчас"; margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--accent);
     background: var(--accent-soft); padding: 1px 8px; border-radius: 999px; vertical-align: 2px; }
 
-  .risk { background: var(--todo-soft); border-radius: 14px; padding: 2px 16px; margin-bottom: 12px; }
-  .risk p { margin: 12px 0; }
+  .to-city { color: inherit; text-decoration: underline dotted var(--muted); text-underline-offset: 4px; }
+
+  .cities { display: grid; gap: 14px; }
+  .city { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; scroll-margin-top: 64px; }
+  .cover { position: relative; aspect-ratio: 16 / 9; background: var(--info-soft); }
+  .cover img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 48px 16px 12px; color: #fff;
+    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+    background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.62)); }
+  .cap h3 { margin: 0; font-size: 26px; letter-spacing: -0.01em; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.3); }
+  .cap span { font-size: 14px; font-variant-numeric: tabular-nums; opacity: 0.92; }
+  .credit { font-size: 11.5px; color: var(--muted); padding: 6px 16px 10px; }
+  .credit a { color: inherit; text-decoration: none; }
+  .city-desc { padding: 0 16px 6px; }
+  .places { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; padding: 0 12px 14px; }
+  .pl { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg); }
+  .pl img { display: block; width: 100%; aspect-ratio: 3 / 2; object-fit: cover; }
+  .pl-body { padding: 8px 10px 2px; }
+  .pl-name { font-weight: 650; font-size: 15px; line-height: 1.3; }
+  .pl-desc { font-size: 13.5px; color: var(--muted); }
+  .pl-desc p { margin: 3px 0; }
+  .pl .credit { padding: 4px 0 8px; font-size: 10.5px; }
   .visas { display: grid; gap: 10px; }
   .visa { padding: 12px 16px; }
   .visa .vc { font-weight: 650; margin-bottom: 8px; }
@@ -290,7 +371,7 @@ const html = `<!doctype html>
   </header>
 
   <nav>
-    <a href="#todo">Дела</a><a href="#route">Маршрут</a><a href="#visas">Визы</a><a href="#bookings">Брони</a><a href="#time">Время</a><a href="#questions">Вопросы</a>
+    <a href="#todo">Дела</a><a href="#route">Маршрут</a>${cities.length ? '<a href="#cities">Города</a>' : ''}<a href="#visas">Визы</a><a href="#bookings">Брони</a><a href="#time">Время</a><a href="#questions">Вопросы</a>
   </nav>
 
   <section id="todo">
@@ -304,9 +385,14 @@ const html = `<!doctype html>
     </ol></div>
   </section>
 
+  ${cities.length ? `<section id="cities">
+    <h2>Города</h2>
+    <div class="cities">${citiesHtml}
+    </div>
+  </section>` : ''}
+
   <section id="visas">
     <h2>Визы и документы</h2>
-    ${riskHtml ? `<div class="risk">${riskHtml}</div>` : ''}
     <div class="visas">${visaHtml}
     </div>
     <details><summary>Подробно: виза в Корею, транзит, Шенген</summary><div class="card prose">${visaDetailsHtml}</div></details>
