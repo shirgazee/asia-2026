@@ -1,0 +1,17 @@
+{
+  "name": "asia-2026",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "marked": "^15.0.12",
+    "staticrypt": "^3.5.4"
+  }
+}
