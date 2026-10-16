@@ -210,8 +210,13 @@ for (const line of sections['Очередь дел'].split('\n')) {
 const fmtLong = (isoDate) => `${+isoDate.slice(8, 10)} ${MONTHS[+isoDate.slice(5, 7) - 1]}`;
 const built = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Lisbon', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date());
 
+// GitHub Pages отдаёт страницу с max-age=600: по version.txt страница сама узнаёт, что вышла новая сборка.
+const BUILD = Date.now().toString(36);
+mkdirSync(new URL('./docs/', import.meta.url), { recursive: true });
+writeFileSync(new URL('./docs/version.txt', import.meta.url), BUILD);
+
 const data = {
-  start, end, tasks, cities: CITIES,
+  build: BUILD, start, end, tasks, cities: CITIES,
   stays: routeRows.filter((r) => !r.transfer).map((r) => ({ name: r.place, from: r.from, to: r.to })),
   firstLeg: transfers[0].place,
 };
@@ -506,6 +511,15 @@ const drawTz = () => {
 };
 drawTz();
 setInterval(drawTz, 30000);
+
+// Вышла новая сборка, а браузер показал старую из кэша — перейти на уникальный адрес мимо кэша.
+fetch('version.txt?' + Date.now(), { cache: 'no-store' })
+  .then((r) => (r.ok ? r.text() : ''))
+  .then((v) => {
+    v = v.trim();
+    if (v && v !== DATA.build && new URLSearchParams(location.search).get('v') !== v) location.replace(location.pathname + '?v=' + v);
+  })
+  .catch(() => {});
 </script>
 </body>
 </html>
