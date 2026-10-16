@@ -2,7 +2,7 @@
 # Пересобрать дашборд из хаба в Obsidian, зашифровать и выложить на GitHub Pages.
 set -euo pipefail
 cd "$(dirname "$0")"
-ob sync >/dev/null 2>&1 || echo "ob sync не прошёл — собираю из локальной копии хаба" >&2
+(cd /home/ae/Documents/vault && ob sync >/dev/null 2>&1) || echo "ob sync не прошёл — собираю из локальной копии хаба" >&2
 node build.mjs
 STATICRYPT_PASSWORD="$(cat .password)" npx --no-install staticrypt build/index.html -d docs --short --remember 0 \
   --template-title "Азия 2026" --template-instructions "Дашборд поездки Дани и Миры. Пароль — у Дани." \
