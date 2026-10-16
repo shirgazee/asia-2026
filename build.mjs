@@ -121,7 +121,9 @@ const tasks = [];
 for (const line of sections['Очередь дел'].split('\n')) {
   const m = line.match(/^- \[( |x)\] (.+)$/);
   if (!m) continue;
-  const text = m[2];
+  // Явный исполнитель «(делает Даня)» важнее догадки по имени в тексте.
+  const owner = m[2].match(/\s*\(делает (Даня|Мира|оба)\)/);
+  const text = owner ? m[2].replace(owner[0], '') : m[2];
   const cut = text.lastIndexOf(' — ');
   let body = text;
   let tail = '';
@@ -139,7 +141,7 @@ for (const line of sections['Очередь дел'].split('\n')) {
   else if (dates.length) due = dates.at(-1);
   const d = /Дан[яиеюу](?![а-яё])/i.test(text);
   const mi = /Миросла/.test(text);
-  const who = /обоих/.test(text) || (d && mi) ? 'оба' : mi ? 'Мира' : d ? 'Даня' : '';
+  const who = owner ? owner[1] : /обоих/.test(text) || (d && mi) ? 'оба' : mi ? 'Мира' : d ? 'Даня' : '';
   tasks.push({ done: m[1] === 'x', html: inline(body), tail: esc(tail), due, from, who });
 }
 
