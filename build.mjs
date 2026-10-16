@@ -106,10 +106,11 @@ const routeHtml = routeRows.map((r) => `
 const visaSec = sections['Визы и документы'];
 const visaTable = parseTable(visaSec);
 const people = visaTable.head.slice(1).map((h) => h.replace(/\s*\(.*\)/, ''));
+const personClass = (name) => (name.startsWith('Дан') ? 'p-dan' : name.startsWith('Мир') ? 'p-mira' : '');
 const visaHtml = visaTable.rows.map(([country, ...cells]) => `
       <div class="card visa">
         <div class="vc">${inline(country)}</div>
-        <dl>${cells.map((c, i) => `<dt>${esc(people[i])}</dt><dd${/\*\*нужна/i.test(c) ? ' class="warn"' : ''}>${inline(c)}</dd>`).join('')}</dl>
+        <dl>${cells.map((c, i) => `<dt class="${personClass(people[i])}">${esc(people[i])}</dt><dd${/\*\*нужна/i.test(c) ? ' class="warn"' : ''}>${inline(c)}</dd>`).join('')}</dl>
       </div>`).join('');
 const visaParas = visaSec.split('\n').filter((l) => !l.trim().startsWith('|')).join('\n').trim().split(/\n{2,}/);
 const riskIdx = visaParas.findIndex((p) => p.startsWith('**⚠️'));
@@ -167,6 +168,7 @@ const html = `<!doctype html>
     --accent: #c2410c; --accent-soft: #fde9dc;
     --ok: #15803d; --ok-soft: #dcfce7; --wip: #92400e; --wip-soft: #fef3c7;
     --todo: #b91c1c; --todo-soft: #fee2e2; --info-soft: #eef0f3;
+    --dan: #1d4ed8; --dan-soft: #dbeafe; --mira: #a21caf; --mira-soft: #fae8ff;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -174,6 +176,7 @@ const html = `<!doctype html>
       --accent: #fb923c; --accent-soft: #3b2416;
       --ok: #4ade80; --ok-soft: #15301f; --wip: #fcd34d; --wip-soft: #362c10;
       --todo: #f87171; --todo-soft: #3a1a1a; --info-soft: #292724;
+      --dan: #93c5fd; --dan-soft: #172554; --mira: #f0abfc; --mira-soft: #3b0a45;
     }
   }
   * { box-sizing: border-box; }
@@ -221,7 +224,10 @@ const html = `<!doctype html>
   .chip { font-size: 13px; padding: 1px 9px; border-radius: 999px; background: var(--info-soft); }
   .chip.over { background: var(--todo-soft); color: var(--todo); }
   .chip.soon { background: var(--wip-soft); color: var(--wip); }
-  .chip.who { background: var(--accent-soft); color: var(--accent); }
+  .chip.dan { background: var(--dan-soft); color: var(--dan); font-weight: 600; }
+  .chip.mira { background: var(--mira-soft); color: var(--mira); font-weight: 600; }
+  .p-dan { color: var(--dan); font-weight: 600; }
+  .p-mira { color: var(--mira); font-weight: 600; }
 
   ol.route { list-style: none; margin: 0; padding: 8px 0; }
   .leg { display: grid; grid-template-columns: 72px 1fr; column-gap: 14px; }
@@ -251,6 +257,8 @@ const html = `<!doctype html>
   .visa .vc { font-weight: 650; margin-bottom: 8px; }
   .visa dl { margin: 0; display: grid; grid-template-columns: 88px 1fr; gap: 8px 12px; font-size: 15px; }
   .visa dt { color: var(--muted); }
+  .visa dt.p-dan { color: var(--dan); }
+  .visa dt.p-mira { color: var(--mira); }
   .visa dd { margin: 0; }
   .visa dd.warn { color: var(--todo); }
 
@@ -275,7 +283,7 @@ const html = `<!doctype html>
 <body>
 <div class="wrap">
   <header class="hero">
-    <div class="eyebrow">${fmtLong(start)} — ${fmtLong(end)} ${YEAR} · Даня и Мира</div>
+    <div class="eyebrow">${fmtLong(start)} — ${fmtLong(end)} ${YEAR} · <span class="p-dan">Даня</span> и <span class="p-mira">Мира</span></div>
     <h1>${esc(tripName)}</h1>
     <div class="chain">${chain.map((c) => `<span class="c">${esc(c)}</span>`).join('<span class="arr">→</span>')}</div>
     <div class="countdown" id="countdown"></div>
@@ -355,6 +363,8 @@ const rel = (n) => n === 0 ? 'сегодня' : n === 1 ? 'завтра' : n ===
 (() => {
   const open = DATA.tasks.filter((x) => !x.done), done = DATA.tasks.filter((x) => x.done);
   const key = (x) => x.due ?? x.from;
+  const WHO = { 'Даня': ['dan'], 'Мира': ['mira'], 'оба': ['dan', 'mira'] };
+  const NAMES = { dan: 'Даня', mira: 'Мира' };
   const groups = [
     ['over', 'Просрочено', open.filter((x) => x.due && diff(x.due) < 0)],
     ['soon', 'Ближайшие 7 дней', open.filter((x) => key(x) && diff(key(x)) >= 0 && diff(key(x)) <= 7 || (!x.due && x.from && diff(x.from) < 0))],
@@ -368,7 +378,7 @@ const rel = (n) => n === 0 ? 'сегодня' : n === 1 ? 'завтра' : n ===
       const when = x.done ? '' : (!x.due && n <= 0) ? ' · можно делать' : ' · ' + rel(n);
       chip = '<span class="chip ' + cls + '">' + x.tail + when + '</span>';
     }
-    const who = x.who ? '<span class="chip who">' + x.who + '</span>' : '';
+    const who = (WHO[x.who] ?? []).map((k) => '<span class="chip ' + k + '">' + NAMES[k] + '</span>').join('');
     return '<li class="task' + (x.done ? ' done' : '') + '"><span class="box"></span><div><div class="tt">' + x.html + '</div>' +
       (chip || who ? '<div class="meta">' + chip + who + '</div>' : '') + '</div></li>';
   };
